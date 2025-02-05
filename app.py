@@ -5,11 +5,17 @@ import numpy as np
 from sklearn.preprocessing import MinMaxScaler
 from tensorflow import keras
 import matplotlib.pyplot as plt
+import pickle
 
 # Load the saved model
 loaded_model = keras.models.load_model("sol_price_prediction_model.h5")
 
+# Load the saved scaler
+with open("sol_price_scaler.pkl", "rb") as file:
+    loaded_scaler = pickle.load(file)
+
 # Streamlit app
+st.set_page_config(layout="wide")
 st.title("Stock Price Prediction App")
 
 # Stock symbol input
@@ -35,60 +41,39 @@ if st.button("Predict"):
                 dataset = data[features].values
 
                 # 3. Scaling
-                scaler = MinMaxScaler(feature_range=(0, 1))
-                scaled_data = scaler.fit_transform(dataset)
+                scaled_data = loaded_scaler.transform(dataset)
 
                 look_back = 21
-
-                def create_dataset(data, look_back=7):
-                    X, y = [], []
-                    for i in range(look_back, len(data)):
-                        X.append(data[i - look_back:i, :])
-                        y.append(data[i, 0])
-                    return np.array(X), np.array(y)
-
-                X, y = create_dataset(scaled_data, look_back=look_back)
-                X = np.reshape(X, (X.shape[0], X.shape[1], X.shape[2]))
 
                 # 4. Prediction (using the loaded model)
                 n_predictions = 7
                 predictions = []
-                all_predicted_scaled = []  # Store scaled predictions
+
+                temp_scaled_data = scaled_data.copy()
 
                 for i in range(n_predictions):
-                    last_lookback_days = scaled_data[-look_back:]
+                    last_lookback_days = temp_scaled_data[-look_back:]
+
                     X_pred = np.array([last_lookback_days])
                     X_pred = np.reshape(X_pred, (X_pred.shape[0], X_pred.shape[1], X_pred.shape[2]))
+
                     predicted_data_scaled = loaded_model.predict(X_pred)
-                    all_predicted_scaled.append(predicted_data_scaled)
 
-
-                    dummy_data = np.zeros((1, dataset.shape[1]))
-                    dummy_data[0, 0] = predicted_data_scaled[0, 0]
-                    predicted_price_full = scaler.inverse_transform(dummy_data)
-                    predicted_price = predicted_price_full[0, 0]
+                    dummy_array_future = np.zeros((predicted_data_scaled.shape[0], dataset.shape[1]))
+                    dummy_array_future[:, 0] = predicted_data_scaled[:, 0]
+                    predicted_price = loaded_scaler.inverse_transform(dummy_array_future)[0, 0]
                     predictions.append(predicted_price)
 
-                    # Correctly update scaled_data
-                    dummy_row_scaled = np.zeros((1, scaled_data.shape[1]))
+                    dummy_row_scaled = np.zeros((1, temp_scaled_data.shape[1]))
                     dummy_row_scaled[0, 0] = predicted_data_scaled[0, 0]
-                    scaled_data = np.concatenate((scaled_data, dummy_row_scaled), axis=0)
+                    temp_scaled_data = np.concatenate((temp_scaled_data, dummy_row_scaled), axis=0)
 
-
-                    data_extended = pd.DataFrame(scaler.inverse_transform(scaled_data), columns=features)
-                    data_extended['EMA'] = data_extended['Close'].ewm(span=7, adjust=False).mean()
-                    data_extended['STD'] = data_extended['Close'].rolling(window=7).std()
-                    data_extended['MA7'] = data_extended['Close'].rolling(window=7).mean()
-                    data_extended['MA21'] = data_extended['Close'].rolling(window=21).mean()
-                    data_extended = data_extended.dropna()
-                    scaled_data = scaler.fit_transform(data_extended[features].values)
-
-                # 5. Plotting (Revert to Matplotlib with labels)
+                # 5. Plotting
                 st.subheader("Price Prediction")
-                last_7_days = data['Close'].tail(7)
+                last_7_days = data['Close'].tail(30)
                 future_dates = pd.date_range(start=last_7_days.index[-1] + pd.Timedelta(days=1), periods=n_predictions)
 
-                fig, ax = plt.subplots(figsize=(20, 8))
+                fig, ax = plt.subplots(figsize=(27, 10), dpi=150)
 
                 ax.plot(last_7_days.index, last_7_days.values, label='Actual Price (Last 7 Days)')
                 ax.plot(future_dates, predictions, label='Predicted Price (Next 7 Days)', marker='o', linestyle='--')
@@ -102,7 +87,7 @@ if st.button("Predict"):
                 ax.set_xlabel('Date')
                 ax.set_ylabel('Price')
                 ax.set_title('Actual vs. Predicted Price (7 Days)')
-                ax.legend(fontsize=14)
+                ax.legend(fontsize=20)
                 ax.grid(True, alpha=0.7)
                 fig.tight_layout()
                 st.pyplot(fig)
